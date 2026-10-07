@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Diagnostic report output
+reports/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets - never commit
+.env
+.env.local
+*.pem
+*.key
+kubeconfig
+*.kubeconfig
