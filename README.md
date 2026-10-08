@@ -28,7 +28,18 @@ Ingress).
 - `kubectl`, with a valid kubeconfig/context pointed at the target cluster
 - Optional: `metrics-server` for CPU/memory checks
 
+**Flags:**
+- `-n` - Namespace the Service lives in
+- `-s` - Service name to diagnose
+- `-i` - Ingress name to check (optional)
+
 **Usage:**
+
+```bash
+python3 k8s_503_diagnose.py -n <Namespace> -s <ServiceName> -i <IngressName>
+```
+
+Example:
 
 ```bash
 python3 k8s_503_diagnose.py -n production -s payments-api
