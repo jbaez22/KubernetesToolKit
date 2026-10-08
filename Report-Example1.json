@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-10-08T06:10:11.164969+00:00",
+  "context": "docker-desktop",
+  "namespace": "threetier-app",
+  "service": "pg-db-postgresql",
+  "ingress": null,
+  "components": [
+    "Service    : pg-db-postgresql  (ClusterIP 10.96.200.238, ports: 5432->tcp-postgresql)",
+    "Pods       : none found",
+    "Endpoints  : 0 ready, 0 not-ready"
+  ],
+  "checks": [
+    {
+      "name": "Service",
+      "status": "PASS",
+      "message": "Service 'pg-db-postgresql' exists.",
+      "details": [
+        "Selector: {'app.kubernetes.io/component': 'primary', 'app.kubernetes.io/instance': 'pg-db', 'app.kubernetes.io/name': 'postgresql'}",
+        "Ports: 5432 -> tcp-postgresql"
+      ]
+    },
+    {
+      "name": "Pods",
+      "status": "FAIL",
+      "message": "No Pods match the Service selector.",
+      "details": []
+    },
+    {
+      "name": "Service endpoints",
+      "status": "FAIL",
+      "message": "Service has no ready endpoints.",
+      "details": []
+    },
+    {
+      "name": "Service targetPort",
+      "status": "INFO",
+      "message": "targetPort 'tcp-postgresql' cannot be verified -- no named container ports are declared on the matching Pods.",
+      "details": []
+    },
+    {
+      "name": "Kubernetes events",
+      "status": "WARN",
+      "message": "Found 1 warning event(s) related to this Service's Pods.",
+      "details": [
+        "12m         Warning   Unhealthy           pod/pg-db-postgresql-0                 Readiness probe failed: 127.0.0.1:5432 - rejecting connections"
+      ]
+    },
+    {
+      "name": "Resource metrics",
+      "status": "INFO",
+      "message": "Metrics unavailable. metrics-server may not be installed.",
+      "details": []
+    }
+  ],
+  "findings": [
+    "2 critical check(s) failed.",
+    "The Service has no ready endpoints.",
+    "Recent Kubernetes warning events were detected for this Service's Pods."
+  ],
+  "recommendations": [
+    "Inspect endpoint status directly: kubectl get endpoints pg-db-postgresql -n threetier-app -o yaml",
+    "Full event list: kubectl get events -n threetier-app --sort-by=.lastTimestamp"
+  ]
+}

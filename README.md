@@ -29,9 +29,12 @@ Ingress).
 - Optional: `metrics-server` for CPU/memory checks
 
 **Flags:**
-- `-n` - Namespace the Service lives in
-- `-s` - Service name to diagnose
-- `-i` - Ingress name to check (optional)
+- `-n` - Namespace the Service(s) live in
+- `-s` - Service name to diagnose. Comma-separated list to check every
+  tier of a multi-service app (e.g. frontend, app server, database) in
+  one run
+- `-i` - Ingress name to check (optional). Only checked against the
+  first Service when `-s` has more than one
 
 **Usage:**
 
@@ -39,7 +42,7 @@ Ingress).
 python3 k8s_503_diagnose.py -n <Namespace> -s <ServiceName> -i <IngressName>
 ```
 
-Example:
+Example (single Service):
 
 ```bash
 python3 k8s_503_diagnose.py -n production -s payments-api
@@ -50,11 +53,28 @@ python3 k8s_503_diagnose.py \
     -i payments-ingress
 ```
 
+Example (full application stack, one tier failing won't hide behind the
+others):
+
+```bash
+python3 k8s_503_diagnose.py -n threetier-app -s frontend,tomcat-app,pg-db-postgresql -i frontend
+```
+
 **Output:**
 - Human-readable diagnostic report on stdout
 - JSON report written to `./reports` (configurable via `-o`)
 
 This tool is strictly read-only — it never modifies cluster state.
+
+**Example Output:**
+
+Checking a Postgres Service with zero matching Pods (a real captured run):
+
+![Example terminal output](Report-Example1.png)
+
+Each run also writes a JSON report with the same data — see
+[`Report-Example1.json`](Report-Example1.json) for the file behind the
+screenshot above.
 
 ## Roadmap
 
