@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "k8s-toolkit"
+version = "0.1.0"
+description = "Tools and scripts to monitor, diagnose, troubleshoot, and correct Kubernetes cluster/application issues."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.scripts]
+k8s-toolkit = "k8s_toolkit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 79
+target-version = "py39"
+
+[tool.mypy]
+# No explicit python_version pin: mypy's own minimum supported target
+# version has moved past 3.9. requires-python above (>=3.9) remains the
+# actual compatibility contract -- the codebase avoids any syntax newer
+# than 3.9 supports (every module uses `from __future__ import annotations`).
+ignore_missing_imports = true

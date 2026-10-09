@@ -1,157 +1,25 @@
-#!/usr/bin/env python3
-
 """
-Kubernetes 503 Diagnostic Tool
+Diagnose common causes of HTTP 503 errors in Kubernetes applications.
 
-Read-only troubleshooting tool for identifying common causes of
-HTTP 503 errors in Kubernetes applications.
-
-Requirements:
-    - Python 3.9+
-    - kubectl
-    - Valid kubeconfig/context
-    - Optional: metrics-server for CPU/memory checks
-
-Example:
-    python3 k8s_503_diagnose.py -n production -s payments-api
-
-    python3 k8s_503_diagnose.py \
-        -n production \
-        -s payments-api \
-        -i payments-ingress
-
-Output:
-    - Human-readable diagnostic report on stdout
-    - JSON report written to the current directory
+Read-only: checks Service/Pod/Endpoint/Ingress state via kubectl and
+never modifies cluster state.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import subprocess
-import sys
-from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
+from k8s_toolkit.kubernetes_client import KubernetesClient
+from k8s_toolkit.models import CheckResult, DiagnosticReport
 
-# ---------------------------------------------------------------------------
-# Data models
-# ---------------------------------------------------------------------------
-
-@dataclass
-class CheckResult:
-    name: str
-    status: str
-    message: str
-    details: list[str] = field(default_factory=list)
-
-
-@dataclass
-class DiagnosticReport:
-    timestamp: str
-    context: str
-    namespace: str
-    service: str
-    ingress: Optional[str]
-    components: list[str] = field(default_factory=list)
-    checks: list[CheckResult] = field(default_factory=list)
-    findings: list[str] = field(default_factory=list)
-    recommendations: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Kubernetes command wrapper
-# ---------------------------------------------------------------------------
-
-class KubectlError(Exception):
-    """Raised when kubectl cannot execute successfully."""
-
-
-class KubernetesClient:
-    """Small wrapper around kubectl."""
-
-    def __init__(self, namespace: str):
-        self.namespace = namespace
-
-    def run(
-        self,
-        args: list[str],
-        *,
-        json_output: bool = False,
-        allow_failure: bool = False,
-    ) -> Any:
-
-        command = ["kubectl", *args, "-n", self.namespace]
-
-        if json_output:
-            command.extend(["-o", "json"])
-
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-            )
-        except FileNotFoundError as exc:
-            raise KubectlError(
-                "kubectl was not found. Please install kubectl."
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise KubectlError(
-                f"kubectl command timed out: {' '.join(command)}"
-            ) from exc
-
-        if result.returncode != 0:
-            if allow_failure:
-                return None
-
-            error = result.stderr.strip() or result.stdout.strip()
-
-            raise KubectlError(
-                f"kubectl command failed: {' '.join(command)}\n{error}"
-            )
-
-        if json_output:
-            try:
-                return json.loads(result.stdout)
-            except json.JSONDecodeError as exc:
-                raise KubectlError(
-                    f"kubectl returned invalid JSON: {exc}"
-                ) from exc
-
-        return result.stdout.strip()
-
-    def get_context(self) -> str:
-        result = subprocess.run(
-            ["kubectl", "config", "current-context"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=10,
-        )
-
-        if result.returncode != 0:
-            return "unknown"
-
-        return result.stdout.strip()
-
-
-# ---------------------------------------------------------------------------
-# Diagnostic engine
-# ---------------------------------------------------------------------------
 
 class Kubernetes503Diagnoser:
-
     def __init__(
         self,
         client: KubernetesClient,
         service_name: str,
-        ingress_name: Optional[str] = None,
+        ingress_name: str | None = None,
     ):
         self.client = client
         self.service_name = service_name
@@ -165,10 +33,10 @@ class Kubernetes503Diagnoser:
             ingress=ingress_name,
         )
 
-        self.service: Optional[dict[str, Any]] = None
+        self.service: dict[str, Any] | None = None
         self.pods: list[dict[str, Any]] = []
-        self.endpoints: Optional[dict[str, Any]] = None
-        self.ingress: Optional[dict[str, Any]] = None
+        self.endpoints: dict[str, Any] | None = None
+        self.ingress: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     # Utility methods
@@ -179,7 +47,7 @@ class Kubernetes503Diagnoser:
         name: str,
         status: str,
         message: str,
-        details: Optional[list[str]] = None,
+        details: list[str] | None = None,
     ) -> None:
 
         self.report.checks.append(
@@ -236,8 +104,7 @@ class Kubernetes503Diagnoser:
         ports = service.get("spec", {}).get("ports", [])
 
         port_details = [
-            f"{p.get('port')} -> {p.get('targetPort')}"
-            for p in ports
+            f"{p.get('port')} -> {p.get('targetPort')}" for p in ports
         ]
 
         self.add_check(
@@ -279,8 +146,7 @@ class Kubernetes503Diagnoser:
             return
 
         selector_string = ",".join(
-            f"{key}={value}"
-            for key, value in selector.items()
+            f"{key}={value}" for key, value in selector.items()
         )
 
         pods = self.client.run(
@@ -385,7 +251,6 @@ class Kubernetes503Diagnoser:
     def check_pod_states(self) -> None:
 
         for pod in self.pods:
-
             pod_name = pod.get("metadata", {}).get("name", "unknown")
 
             phase = pod.get("status", {}).get("phase", "Unknown")
@@ -408,9 +273,7 @@ class Kubernetes503Diagnoser:
                     f"Pod phase is {phase}.",
                 )
 
-                self.add_finding(
-                    f"Pod {pod_name} is not Running."
-                )
+                self.add_finding(f"Pod {pod_name} is not Running.")
 
                 continue
 
@@ -435,7 +298,6 @@ class Kubernetes503Diagnoser:
         is_init = label == "Init container"
 
         for container in statuses:
-
             container_name = container.get(
                 "name",
                 "unknown",
@@ -464,9 +326,7 @@ class Kubernetes503Diagnoser:
                     f"{label} is waiting: {reason}",
                 )
 
-                self.add_finding(
-                    f"{pod_name}/{container_name}: {reason}"
-                )
+                self.add_finding(f"{pod_name}/{container_name}: {reason}")
 
             elif terminated:
                 reason = terminated.get(
@@ -492,7 +352,6 @@ class Kubernetes503Diagnoser:
                 )
 
             elif restart_count > 0:
-
                 self.add_check(
                     f"Restarts: {pod_name}/{container_name}",
                     "WARN",
@@ -537,35 +396,25 @@ class Kubernetes503Diagnoser:
         not_ready_pod_names = []
 
         for subset in subsets:
-
             for address in subset.get("addresses", []):
-                addresses.append(
-                    address.get("ip", "unknown")
-                )
+                addresses.append(address.get("ip", "unknown"))
 
             for address in subset.get("notReadyAddresses", []):
-                not_ready_addresses.append(
-                    address.get("ip", "unknown")
-                )
+                not_ready_addresses.append(address.get("ip", "unknown"))
 
-                target_ref_name = address.get(
-                    "targetRef", {}
-                ).get("name")
+                target_ref_name = address.get("targetRef", {}).get("name")
 
                 if target_ref_name:
                     not_ready_pod_names.append(target_ref_name)
 
         if not addresses:
-
             self.add_check(
                 "Service endpoints",
                 "FAIL",
                 "Service has no ready endpoints.",
             )
 
-            self.add_finding(
-                "The Service has no ready endpoints."
-            )
+            self.add_finding("The Service has no ready endpoints.")
 
             self.add_recommendation(
                 "Inspect endpoint status directly: "
@@ -574,7 +423,6 @@ class Kubernetes503Diagnoser:
             )
 
         else:
-
             self.add_check(
                 "Service endpoints",
                 "PASS",
@@ -583,7 +431,6 @@ class Kubernetes503Diagnoser:
             )
 
         if not_ready_addresses:
-
             self.add_check(
                 "Not-ready endpoints",
                 "WARN",
@@ -634,17 +481,13 @@ class Kubernetes503Diagnoser:
         pod_ports_by_number = set()
         pod_ports_by_name = set()
 
-        service_selector = self.service.get("spec", {}).get(
-            "selector", {}
-        )
+        service_selector = self.service.get("spec", {}).get("selector", {})
 
         selector_string = ",".join(
-            f"{key}={value}"
-            for key, value in service_selector.items()
+            f"{key}={value}" for key, value in service_selector.items()
         )
 
         for pod in self.pods:
-
             for container in pod.get(
                 "spec",
                 {},
@@ -652,15 +495,11 @@ class Kubernetes503Diagnoser:
                 "containers",
                 [],
             ):
-
                 for port in container.get(
                     "ports",
                     [],
                 ):
-
-                    container_port = port.get(
-                        "containerPort"
-                    )
+                    container_port = port.get("containerPort")
 
                     if container_port:
                         pod_ports_by_number.add(container_port)
@@ -671,15 +510,10 @@ class Kubernetes503Diagnoser:
                         pod_ports_by_name.add(port_name)
 
         for service_port in service_ports:
-
-            target_port = service_port.get(
-                "targetPort"
-            )
+            target_port = service_port.get("targetPort")
 
             if isinstance(target_port, int):
-
                 if not pod_ports_by_number:
-
                     self.add_check(
                         "Service targetPort",
                         "INFO",
@@ -689,7 +523,6 @@ class Kubernetes503Diagnoser:
                     )
 
                 elif target_port not in pod_ports_by_number:
-
                     self.add_check(
                         "Service targetPort",
                         "WARN",
@@ -713,7 +546,6 @@ class Kubernetes503Diagnoser:
                     )
 
                 else:
-
                     self.add_check(
                         "Service targetPort",
                         "PASS",
@@ -721,9 +553,7 @@ class Kubernetes503Diagnoser:
                     )
 
             elif isinstance(target_port, str):
-
                 if not pod_ports_by_name:
-
                     self.add_check(
                         "Service targetPort",
                         "INFO",
@@ -733,7 +563,6 @@ class Kubernetes503Diagnoser:
                     )
 
                 elif target_port not in pod_ports_by_name:
-
                     self.add_check(
                         "Service targetPort",
                         "WARN",
@@ -760,7 +589,6 @@ class Kubernetes503Diagnoser:
                     )
 
                 else:
-
                     self.add_check(
                         "Service targetPort",
                         "PASS",
@@ -774,7 +602,6 @@ class Kubernetes503Diagnoser:
     def check_probes(self) -> None:
 
         for pod in self.pods:
-
             pod_name = pod.get(
                 "metadata",
                 {},
@@ -792,25 +619,18 @@ class Kubernetes503Diagnoser:
             )
 
             for container in containers:
-
                 container_name = container.get(
                     "name",
                     "unknown",
                 )
 
-                readiness = container.get(
-                    "readinessProbe"
-                )
+                readiness = container.get("readinessProbe")
 
-                liveness = container.get(
-                    "livenessProbe"
-                )
+                liveness = container.get("livenessProbe")
 
                 if not readiness:
-
                     self.add_check(
-                        f"Readiness probe: "
-                        f"{pod_name}/{container_name}",
+                        f"Readiness probe: {pod_name}/{container_name}",
                         "WARN",
                         "No readiness probe configured.",
                     )
@@ -824,19 +644,15 @@ class Kubernetes503Diagnoser:
                     )
 
                 else:
-
                     self.add_check(
-                        f"Readiness probe: "
-                        f"{pod_name}/{container_name}",
+                        f"Readiness probe: {pod_name}/{container_name}",
                         "PASS",
                         "Readiness probe is configured.",
                     )
 
                 if liveness:
-
                     self.add_check(
-                        f"Liveness probe: "
-                        f"{pod_name}/{container_name}",
+                        f"Liveness probe: {pod_name}/{container_name}",
                         "PASS",
                         "Liveness probe is configured.",
                     )
@@ -867,8 +683,7 @@ class Kubernetes503Diagnoser:
         lines = events.splitlines()
 
         relevant_names = [self.service_name] + [
-            pod.get("metadata", {}).get("name", "")
-            for pod in self.pods
+            pod.get("metadata", {}).get("name", "") for pod in self.pods
         ]
 
         relevant_names = [name for name in relevant_names if name]
@@ -881,7 +696,6 @@ class Kubernetes503Diagnoser:
         ]
 
         if warning_events:
-
             recent = warning_events[-10:]
 
             self.add_check(
@@ -903,7 +717,6 @@ class Kubernetes503Diagnoser:
             )
 
         else:
-
             self.add_check(
                 "Kubernetes events",
                 "PASS",
@@ -932,16 +745,13 @@ class Kubernetes503Diagnoser:
         self.ingress = ingress
 
         if not ingress:
-
             self.add_check(
                 "Ingress",
                 "FAIL",
                 f"Ingress '{self.ingress_name}' was not found.",
             )
 
-            self.add_finding(
-                "The specified Ingress does not exist."
-            )
+            self.add_finding("The specified Ingress does not exist.")
 
             return
 
@@ -962,11 +772,9 @@ class Kubernetes503Diagnoser:
         backend_services = []
 
         for rule in rules:
-
             http = rule.get("http", {})
 
             for path in http.get("paths", []):
-
                 backend = path.get(
                     "backend",
                     {},
@@ -983,7 +791,6 @@ class Kubernetes503Diagnoser:
                     backend_services.append(name)
 
         if backend_services and self.service_name not in backend_services:
-
             self.add_check(
                 "Ingress backend",
                 "WARN",
@@ -1003,7 +810,6 @@ class Kubernetes503Diagnoser:
             )
 
         elif backend_services:
-
             self.add_check(
                 "Ingress backend",
                 "PASS",
@@ -1026,12 +832,10 @@ class Kubernetes503Diagnoser:
         )
 
         if not metrics:
-
             self.add_check(
                 "Resource metrics",
                 "INFO",
-                "Metrics unavailable. metrics-server may not "
-                "be installed.",
+                "Metrics unavailable. metrics-server may not be installed.",
             )
 
             return
@@ -1039,16 +843,13 @@ class Kubernetes503Diagnoser:
         relevant = []
 
         for line in metrics.splitlines():
-
             if any(
-                pod.get("metadata", {}).get("name", "")
-                in line
+                pod.get("metadata", {}).get("name", "") in line
                 for pod in self.pods
             ):
                 relevant.append(line)
 
         if relevant:
-
             self.add_check(
                 "Resource metrics",
                 "PASS",
@@ -1063,17 +864,13 @@ class Kubernetes503Diagnoser:
     def build_component_summary(self) -> None:
 
         if self.service:
-
             ports = self.service.get("spec", {}).get("ports", [])
 
             port_strs = [
-                f"{p.get('port')}->{p.get('targetPort')}"
-                for p in ports
+                f"{p.get('port')}->{p.get('targetPort')}" for p in ports
             ]
 
-            cluster_ip = self.service.get("spec", {}).get(
-                "clusterIP", "none"
-            )
+            cluster_ip = self.service.get("spec", {}).get("clusterIP", "none")
 
             self.report.components.append(
                 f"{'Service':<11}: {self.service_name}  "
@@ -1082,55 +879,36 @@ class Kubernetes503Diagnoser:
             )
 
         else:
-
             self.report.components.append(
                 f"{'Service':<11}: {self.service_name}  (NOT FOUND)"
             )
 
         if self.pods:
-
-            self.report.components.append(
-                f"{f'Pods ({len(self.pods)})':<11}:"
-            )
+            self.report.components.append(f"{f'Pods ({len(self.pods)})':<11}:")
 
             for pod in self.pods:
+                pod_name = pod.get("metadata", {}).get("name", "unknown")
 
-                pod_name = pod.get("metadata", {}).get(
-                    "name", "unknown"
-                )
+                phase = pod.get("status", {}).get("phase", "Unknown")
 
-                phase = pod.get("status", {}).get(
-                    "phase", "Unknown"
-                )
-
-                ready = (
-                    "Ready"
-                    if self.is_pod_ready(pod)
-                    else "NOT READY"
-                )
+                ready = "Ready" if self.is_pod_ready(pod) else "NOT READY"
 
                 self.report.components.append(
                     f"  - {pod_name:<38} {phase:<10} {ready}"
                 )
 
         else:
-
-            self.report.components.append(
-                f"{'Pods':<11}: none found"
-            )
+            self.report.components.append(f"{'Pods':<11}: none found")
 
         if self.endpoints:
-
             subsets = self.endpoints.get("subsets", [])
 
             ready_count = sum(
-                len(subset.get("addresses", []))
-                for subset in subsets
+                len(subset.get("addresses", [])) for subset in subsets
             )
 
             not_ready_count = sum(
-                len(subset.get("notReadyAddresses", []))
-                for subset in subsets
+                len(subset.get("notReadyAddresses", [])) for subset in subsets
             )
 
             self.report.components.append(
@@ -1139,14 +917,10 @@ class Kubernetes503Diagnoser:
             )
 
         if self.ingress_name:
-
             if self.ingress:
-
                 hosts = [
                     rule.get("host", "*")
-                    for rule in self.ingress.get(
-                        "spec", {}
-                    ).get("rules", [])
+                    for rule in self.ingress.get("spec", {}).get("rules", [])
                 ]
 
                 self.report.components.append(
@@ -1155,7 +929,6 @@ class Kubernetes503Diagnoser:
                 )
 
             else:
-
                 self.report.components.append(
                     f"{'Ingress':<11}: {self.ingress_name}  (NOT FOUND)"
                 )
@@ -1167,26 +940,20 @@ class Kubernetes503Diagnoser:
     def diagnose(self) -> None:
 
         failures = [
-            check
-            for check in self.report.checks
-            if check.status == "FAIL"
+            check for check in self.report.checks if check.status == "FAIL"
         ]
 
         warnings = [
-            check
-            for check in self.report.checks
-            if check.status == "WARN"
+            check for check in self.report.checks if check.status == "WARN"
         ]
 
         if failures:
-
             self.report.findings.insert(
                 0,
                 f"{len(failures)} critical check(s) failed.",
             )
 
         elif warnings:
-
             self.report.findings.insert(
                 0,
                 f"No critical checks failed, but "
@@ -1194,21 +961,16 @@ class Kubernetes503Diagnoser:
             )
 
         else:
-
             self.report.findings.insert(
                 0,
-                "No obvious Kubernetes configuration problem "
-                "was detected.",
+                "No obvious Kubernetes configuration problem was detected.",
             )
 
             if self.service:
-                selector = self.service.get("spec", {}).get(
-                    "selector", {}
-                )
+                selector = self.service.get("spec", {}).get("selector", {})
 
                 selector_string = ",".join(
-                    f"{key}={value}"
-                    for key, value in selector.items()
+                    f"{key}={value}" for key, value in selector.items()
                 )
 
                 log_command = (
@@ -1249,260 +1011,3 @@ class Kubernetes503Diagnoser:
         self.diagnose()
 
         return self.report
-
-
-# ---------------------------------------------------------------------------
-# Output
-# ---------------------------------------------------------------------------
-
-def print_report(
-    report: DiagnosticReport,
-    position: Optional[tuple[int, int]] = None,
-) -> None:
-
-    print()
-    print("=" * 72)
-
-    if position:
-        current, total = position
-        print(
-            f" Kubernetes 503 Diagnostic Report  "
-            f"[{current}/{total}] -- {report.service}"
-        )
-    else:
-        print(" Kubernetes 503 Diagnostic Report")
-
-    print("=" * 72)
-
-    print(f"Timestamp : {report.timestamp}")
-    print(f"Context   : {report.context}")
-    print(f"Namespace : {report.namespace}")
-    print(f"Service   : {report.service}")
-
-    if report.ingress:
-        print(f"Ingress   : {report.ingress}")
-
-    print()
-    print("-" * 72)
-    print("2. COMPONENTS")
-    print("-" * 72)
-
-    for line in report.components:
-        print(line)
-
-    print()
-    print("-" * 72)
-    print("3. CHECKS")
-    print("-" * 72)
-    print()
-
-    for check in report.checks:
-
-        print(f"[{check.status:<4}] {check.name}")
-        print(f"       {check.message}")
-
-        for detail in check.details:
-            print(f"       - {detail}")
-
-        print("-" * 32)
-        print()
-
-    print("-" * 72)
-    print("4. FINDINGS")
-    print("-" * 72)
-
-    for finding in report.findings:
-        print(f"- {finding}")
-
-    print()
-    print("-" * 72)
-    print("5. RECOMMENDATIONS")
-    print("-" * 72)
-
-    for recommendation in report.recommendations:
-        print(f"- {recommendation}")
-
-    print()
-    print("=" * 72)
-    print()
-
-
-def save_report(
-    report: DiagnosticReport,
-    output_directory: Path,
-) -> Path:
-
-    output_directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    timestamp = datetime.now().strftime(
-        "%Y%m%d_%H%M%S"
-    )
-
-    filename = (
-        f"k8s_503_report_"
-        f"{report.namespace}_"
-        f"{report.service}_"
-        f"{timestamp}.json"
-    )
-
-    output_file = output_directory / filename
-
-    output_file.write_text(
-        json.dumps(
-            asdict(report),
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-    return output_file
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def parse_arguments() -> argparse.Namespace:
-
-    parser = argparse.ArgumentParser(
-        description=(
-            "Diagnose common causes of HTTP 503 errors "
-            "in Kubernetes applications."
-        )
-    )
-
-    parser.add_argument(
-        "-n",
-        "--namespace",
-        required=True,
-        help="Kubernetes namespace.",
-    )
-
-    parser.add_argument(
-        "-s",
-        "--service",
-        required=True,
-        help=(
-            "Kubernetes Service name. Pass a comma-separated list "
-            "(e.g. frontend,tomcat-app,pg-db-postgresql) to diagnose "
-            "every tier of a multi-service application in one run."
-        ),
-    )
-
-    parser.add_argument(
-        "-i",
-        "--ingress",
-        help=(
-            "Optional Kubernetes Ingress name. Only checked against "
-            "the first Service when multiple are given."
-        ),
-    )
-
-    parser.add_argument(
-        "-o",
-        "--output",
-        default="./reports",
-        help="Directory for JSON reports. Default: ./reports",
-    )
-
-    return parser.parse_args()
-
-
-def main() -> int:
-
-    args = parse_arguments()
-
-    client = KubernetesClient(
-        namespace=args.namespace
-    )
-
-    service_names = [
-        name.strip()
-        for name in args.service.split(",")
-        if name.strip()
-    ]
-
-    exit_code = 0
-    summary = []
-
-    try:
-
-        for index, service_name in enumerate(service_names):
-
-            # The Ingress fronts one entry-point Service -- only
-            # check it against the first Service in the list.
-            ingress_name = args.ingress if index == 0 else None
-
-            diagnoser = Kubernetes503Diagnoser(
-                client=client,
-                service_name=service_name,
-                ingress_name=ingress_name,
-            )
-
-            report = diagnoser.run()
-
-            position = (
-                (index + 1, len(service_names))
-                if len(service_names) > 1
-                else None
-            )
-
-            print_report(report, position=position)
-
-            output_file = save_report(
-                report,
-                Path(args.output),
-            )
-
-            print(f"JSON report saved to: {output_file}")
-
-            failures = [
-                check
-                for check in report.checks
-                if check.status == "FAIL"
-            ]
-
-            if failures:
-                exit_code = 1
-                summary.append(f"[FAIL] {service_name}")
-            else:
-                summary.append(f"[OK]   {service_name}")
-
-        if len(service_names) > 1:
-
-            print("=" * 72)
-            print(" Multi-Service Summary")
-            print("=" * 72)
-
-            for line in summary:
-                print(line)
-
-            print("=" * 72)
-            print()
-
-        return exit_code
-
-    except KubectlError as exc:
-
-        print(
-            f"\nERROR: {exc}",
-            file=sys.stderr,
-        )
-
-        return 1
-
-    except KeyboardInterrupt:
-
-        print(
-            "\nInterrupted.",
-            file=sys.stderr,
-        )
-
-        return 130
-
-
-if __name__ == "__main__":
-    sys.exit(main())

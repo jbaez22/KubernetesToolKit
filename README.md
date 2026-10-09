@@ -1,16 +1,28 @@
 # KubernetesToolKit
 
-A growing collection of tools and scripts to monitor, diagnose, troubleshoot,
-and eventually auto-correct issues in Kubernetes clusters and the
-applications running on them.
+A growing collection of tools to monitor, diagnose, troubleshoot, and
+eventually auto-correct issues in Kubernetes clusters and the
+applications running on them, packaged as a single `k8s-toolkit` CLI.
+
+## Installation
+
+Requires Python 3.9+ and `kubectl` with a valid kubeconfig/context
+pointed at the target cluster.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+```
+
+This installs the `k8s-toolkit` command into `.venv/bin/`.
 
 ## Tools
 
-### `k8s_503_diagnose.py`
+### `diagnose-503`
 
-Read-only diagnostic tool for identifying common causes of HTTP 503 errors
-in a Kubernetes application exposed via a Service (and optionally an
-Ingress).
+Read-only diagnostic tool for identifying common causes of HTTP 503
+errors in a Kubernetes application exposed via a Service (and optionally
+an Ingress).
 
 **Checks performed:**
 - Service existence and selector validity
@@ -23,11 +35,6 @@ Ingress).
 - Ingress backend routing (if an Ingress name is supplied)
 - Pod CPU/memory metrics (if `metrics-server` is installed)
 
-**Requirements:**
-- Python 3.9+
-- `kubectl`, with a valid kubeconfig/context pointed at the target cluster
-- Optional: `metrics-server` for CPU/memory checks
-
 **Flags:**
 - `-n` - Namespace the Service(s) live in
 - `-s` - Service name to diagnose. Comma-separated list to check every
@@ -35,19 +42,20 @@ Ingress).
   one run
 - `-i` - Ingress name to check (optional). Only checked against the
   first Service when `-s` has more than one
+- `-o` - Directory for JSON reports. Default: `./reports`
 
 **Usage:**
 
 ```bash
-python3 k8s_503_diagnose.py -n <Namespace> -s <ServiceName> -i <IngressName>
+k8s-toolkit diagnose-503 -n <Namespace> -s <ServiceName> -i <IngressName>
 ```
 
 Example (single Service):
 
 ```bash
-python3 k8s_503_diagnose.py -n production -s payments-api
+k8s-toolkit diagnose-503 -n production -s payments-api
 
-python3 k8s_503_diagnose.py \
+k8s-toolkit diagnose-503 \
     -n production \
     -s payments-api \
     -i payments-ingress
@@ -57,7 +65,7 @@ Example (full application stack, one tier failing won't hide behind the
 others):
 
 ```bash
-python3 k8s_503_diagnose.py -n threetier-app -s frontend,tomcat-app,pg-db-postgresql -i frontend
+k8s-toolkit diagnose-503 -n threetier-app -s frontend,tomcat-app,pg-db-postgresql -i frontend
 ```
 
 **Output:**
@@ -75,6 +83,31 @@ Checking a Postgres Service with zero matching Pods (a real captured run):
 Each run also writes a JSON report with the same data — see
 [`Report-Example1.json`](Report-Example1.json) for the file behind the
 screenshot above.
+
+## Development
+
+```bash
+make setup   # create .venv, install dev tooling + the package itself
+make check   # lint, type-check, test (>=80% coverage), dependency audit
+```
+
+See `Makefile` for the individual targets (`lint`, `typecheck`, `test`,
+`audit`).
+
+## Project structure
+
+```text
+src/k8s_toolkit/
+├── cli.py                 # k8s-toolkit entry point, one subcommand per tool
+├── kubernetes_client.py    # thin, tested kubectl wrapper
+├── models.py                # shared CheckResult/DiagnosticReport
+├── checks/
+│   └── http_503.py         # diagnose-503 logic
+└── reporting/
+    ├── console.py           # human-readable terminal output
+    └── json_report.py       # JSON report file output
+tests/                      # pytest, kubectl fully mocked -- no cluster needed
+```
 
 ## Roadmap
 
